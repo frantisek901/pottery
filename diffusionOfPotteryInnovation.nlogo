@@ -1,10 +1,17 @@
 extensions [
   csv
   table
+  rnd
+  nw
 ]
 
 breed [muslims muslim]
 breed [hindi a-hindu]
+
+directed-link-breed [sim-diffusions sim-diffusion]
+undirected-link-breed [relatives relative]
+directed-link-breed [diffusions diffusion]
+
 
 turtles-own [
   adoption  ;; adoption is the date, when agent adopted, corresponds to ticks
@@ -12,22 +19,52 @@ turtles-own [
   name      ;; numeric ID
   threshold ;; the empirical thereshold at which agent adopted
   visited?  ;; represents if the agent went to the source of the innovation
+
+  simAdoption ;; signals when adopted
+  simAdopted? ;; signals whether adopted
+  spatialProperty ;; List of my distances to other villages
 ]
 
 patches-own [village-name]
 
+globals [distances]
+
 to setup
   ca
-  calibrate-world-and-agents
-
+  random-seed RS
+  calibrate-world-and-agentS
   reset-ticks
+  ask turtles with [adoption = 0] [signal-adoption]
+end
+
+
+to signal-adoption
+  set size 2
+  set color red
+  set simAdoption ticks
+  set simAdopted? true
 end
 
 
 to calibrate-world-and-agents
   create-villages
   calibrate-agents
+  calibrate-distances
 end
+
+to calibrate-distances
+  set distances table:make
+  let distList (csv:from-file "distances.csv")
+  foreach villages [from ->
+    let fromDist table:make
+    let fromToDistances butfirst item 0 filter [id -> item 0 id = from] distList
+    foreach villages [ whereTo ->
+      table:put fromDist whereTo item (position whereTo villages) fromToDistances
+    ]
+    table:put distances from fromDist
+  ]
+end
+
 
 to create-villages
   let village-colors [4 14 24 34 44 54 64 74 84 94 104 114 124 134 12 22 32 42]
@@ -60,8 +97,19 @@ to calibrate-agents
       set adoption (item 3 row)
       set visited? (item 4 row)
       set threshold (item 5 row)
+      set simAdopted? false
     ]
   ]
+
+  let agentsByName table:group-agents turtles [name]
+  foreach but-first (csv:from-file "edges.csv" ";") [row ->
+    ask table:get agentsByName item 0 row [
+      let targetAgents table:get agentsByName item 1 row
+      if item 2 row = "diffusions" [create-diffusions-to targetAgents [set color red]]
+      if item 2 row = "relatives" [create-relatives-with targetAgents [set color grey]]
+    ]
+  ]
+
   settle-turtles
 end
 
@@ -88,23 +136,87 @@ end
 
 
 to go
+  if ticks = 53 [
+    stop
+  ]
+  nw:set-context turtles relatives
+  ask turtles with [visited?] [if ticks = adoption [signal-adoption]]
 
-
+  ;if mechanism = "at-random" [at-random]
+  ;if mechanism = "spatial" [spatial]
+  run mechanism
 
   tick
 end
 
 
+to at-random
+ifelse Simone? [
+  ask turtles with [simAdopted?] [
+      if p > random-float 1 [ask one-of other turtles with [breed = [breed] of myself] [adopt]]
+  ]
+][
+  ask turtles with [not simAdopted?] [
+    ask one-of other turtles with [breed = [breed] of myself] [
+        if simAdopted? [ask myself [adopt]]
+    ]
+  ]
+]
+end
+
+to spatial
+  ask turtles with [simAdopted?] [
+    let cand other turtles with [breed = [breed] of myself]
+    ask cand [
+      let dist get-distances [village] of myself village
+      ifelse dist = 0 [set spatialProperty 0.99][set spatialProperty 1 / (dist ^ 2)]
+    ]
+    let winner rnd:weighted-one-of cand [spatialProperty]
+    if p > random-float 1 [ask winner [adopt]]
+  ]
+end
+
+to relational
+  ask turtles with [simAdopted?] [
+    let cand other turtles with [breed = [breed] of myself]
+    ask cand [
+      let dist nw:distance-to myself
+      set spatialProperty ifelse-value (dist = false) [0.0000000000000000000000001][1 / (dist ^ 2)]
+    ]
+    let winner rnd:weighted-one-of cand [spatialProperty]
+    if p > random-float 1 [ask winner [adopt]]
+  ]
+end
+
+to adopt
+  if not simAdopted? [
+    signal-adoption
+    create-sim-diffusion-from myself [set color white]
+  ]
+end
+
 
 to-report villages
-  report remove-duplicates [village] of turtles
+  report sort remove-duplicates [village] of turtles
+end
+
+to-report adoption% [agentset]
+  report 100 * count agentset with [simAdopted?] / count agentset
+end
+
+to-report timed-accuracy [agentset]
+  report mean [abs(adoption - simAdoption)] of agentset
+end
+
+to-report get-distances [whereTo whereFrom]
+  report table:get (table:get distances whereTo) whereFrom
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-212
-10
-1060
-439
+644
+11
+1492
+440
 -1
 -1
 10.0
@@ -222,21 +334,111 @@ length villages
 1
 11
 
-BUTTON
-39
-283
-151
-316
-Special Buttom
-crt 10 [fd 5]
+PLOT
+218
+38
+593
+262
+Muslims potters adoption %
 NIL
+NIL
+0.0
+10.0
+0.0
+100.0
+true
+true
+"foreach range 54 [ t ->\n  plotxy t (count muslims with [adoption <= t] / count muslims * 100)\n]" ""
+PENS
+"empirical" 1.0 0 -2674135 true "" ""
+"simulated" 1.0 0 -16777216 true "" "plotxy ticks adoption% muslims"
+
+PLOT
+218
+261
+593
+411
+Hindi potters adoption %
+NIL
+NIL
+0.0
+10.0
+0.0
+100.0
+true
+true
+"foreach range 54 [t ->\n  plotxy t (100 * count hindi with [adoption <= t] / count hindi)\n]" ""
+PENS
+"empirical" 1.0 0 -13345367 true "" ""
+"simulated" 1.0 0 -16777216 true "" "plotxy ticks adoption% hindi"
+
+SWITCH
+14
+298
+123
+331
+Simone?
+Simone?
+0
 1
-T
-OBSERVER
+-1000
+
+SLIDER
+15
+264
+187
+297
+p
+p
+0
+1
+0.45
+0.01
+1
 NIL
+HORIZONTAL
+
+MONITOR
+218
+411
+360
+456
 NIL
+timed-accuracy muslims
+1
+1
+11
+
+MONITOR
+462
+411
+593
+456
 NIL
-NIL
+timed-accuracy hindi
+1
+1
+11
+
+INPUTBOX
+101
+68
+151
+128
+RS
+100.0
+1
+0
+Number
+
+CHOOSER
+14
+333
+152
+378
+mechanism
+mechanism
+"at-random" "spatial" "relational"
 1
 
 @#$#@#$#@
